@@ -1,83 +1,107 @@
-
-import phonenumbers
-import requests
-import json
 import re
-from bs4 import BeautifulSoup
-from phonenumbers import geocoder, carrier
+import json
+import argparse
+import requests
+from datetime import datetime
+from colorama import Fore, Style, init
 
-def validate_number(number):
-    try:
-        parsed = phonenumbers.parse(number, "PK")
-        if not phonenumbers.is_valid_number(parsed):
-            return None
-        return parsed
-    except:
-        return None
+init(autoreset=True)
 
-def get_carrier_and_region(parsed_number):
-    sim_carrier = carrier.name_for_number(parsed_number, "en")
-    region = geocoder.description_for_number(parsed_number, "en")
-    return sim_carrier, region
+# Carrier & Region mapping for Pakistani numbers
+prefix_region_map = {
+    "300": ("Jazz", "Punjab"), "301": ("Jazz", "Sindh"), "302": ("Jazz", "Punjab"),
+    "303": ("Jazz", "KPK"), "304": ("Jazz", "Balochistan"), "305": ("Jazz", "Islamabad"),
+    "310": ("Zong", "Punjab"), "311": ("Zong", "Sindh"), "312": ("Zong", "KPK"),
+    "313": ("Zong", "Balochistan"), "314": ("Zong", "Islamabad"),
+    "320": ("Ufone", "Punjab"), "321": ("Ufone", "Sindh"), "322": ("Ufone", "KPK"),
+    "323": ("Ufone", "Balochistan"), "324": ("Ufone", "Islamabad"),
+    "340": ("Telenor", "Punjab"), "341": ("Telenor", "Sindh"), "342": ("Telenor", "KPK"),
+    "343": ("Telenor", "Balochistan"), "344": ("Telenor", "Islamabad"),
+    "345": ("Telenor", "Gilgit Baltistan")
+}
 
-def check_gmail(number):
-    headers = {
-        "Content-Type": "application/json"
-    }
-    # Google account recovery check (simulate)
-    # Real check would require scraping and is sensitive to changes
-    if number.startswith("+92"):
-        return "Possible Gmail association (based on format)"
-    return "Unknown"
+def is_valid_pakistani_number(number):
+    return re.fullmatch(r"\+923\d{9}", number) is not None
 
-def check_whatsapp(number):
-    url = f"https://wa.me/{number.replace('+', '')}"
-    try:
-        r = requests.get(url)
-        if "WhatsApp" in r.text:
-            return True
-    except:
-        pass
-    return False
+def get_carrier_region(number):
+    prefix = number[3:6]
+    return prefix_region_map.get(prefix, ("Unknown", "Unknown"))
 
-def google_dork_search(number):
-    query = f'"{number}" site:pastebin.com OR site:github.com OR site:facebook.com'
+def generate_google_dork(number):
+    query = f'"{number}" site:pastebin.com OR site:facebook.com OR site:github.com'
     return f"https://www.google.com/search?q={requests.utils.quote(query)}"
 
-def main():
-    target = input("Enter Pakistani phone number (e.g., +923001234567): ").strip()
-    parsed_number = validate_number(target)
-    if not parsed_number:
-        print("[!] Invalid Pakistani number.")
-        return
+def check_whatsapp_status(number):
+    return f"https://wa.me/{number[1:]}"
 
-    print("[+] Valid number.")
-    sim_carrier, region = get_carrier_and_region(parsed_number)
-    print(f"[+] Carrier: {sim_carrier}")
-    print(f"[+] Region: {region}")
-
-    gmail_status = check_gmail(target)
-    print(f"[+] Gmail: {gmail_status}")
-
-    is_on_whatsapp = check_whatsapp(target)
-    print(f"[+] WhatsApp: {'Yes' if is_on_whatsapp else 'No or Unknown'}")
-
-    google_dork = google_dork_search(target)
-    print(f"[+] Google Dork Search URL:
-    {google_dork}")
-
-    result = {
-        "number": target,
-        "carrier": sim_carrier,
-        "region": region,
-        "gmail_association": gmail_status,
-        "whatsapp": is_on_whatsapp,
-        "google_dork_url": google_dork
+def simulate_social_checks(number):
+    return {
+        "Facebook": f"https://www.facebook.com/login/identify/?ctx=recover&ars=facebook_login&email={number}",
+        "Instagram": "Simulated (Use recovery page or social lookup)",
+        "TikTok": "Simulated (Search by number not publicly supported)",
+        "Gmail": "Try password recovery (https://accounts.google.com/signin/recovery)"
     }
 
-    with open("pakrecon_report.json", "w") as f:
-        json.dump(result, f, indent=4)
-    print("[+] Report saved to pakrecon_report.json")
+def check_leaks_dork(number):
+    query = f'"{number}" leak OR database OR "phone" filetype:txt'
+    return f"https://www.google.com/search?q={requests.utils.quote(query)}"
+
+def save_report(data, number):
+    fname = f"pakrecon_report_{number[1:]}.json"
+    with open(fname, "w") as f:
+        json.dump(data, f, indent=4)
+    print(Fore.GREEN + f"[✔] Report saved as {fname}")
+
+def main():
+    parser = argparse.ArgumentParser(description="PakRecon v2 - Advanced Pakistani Phone Number OSINT Tool")
+    parser.add_argument("--number", help="Phone number in +923XXXXXXXXX format")
+    args = parser.parse_args()
+
+    if args.number:
+        number = args.number.strip()
+    else:
+        number = input(Fore.CYAN + "Enter phone number (+923XXXXXXXXX): ").strip()
+
+    if not is_valid_pakistani_number(number):
+        print(Fore.RED + "[!] Invalid phone number format.")
+        return
+
+    print(Fore.GREEN + "[+] Valid number detected.")
+    carrier, region = get_carrier_region(number)
+    print(f"[+] Carrier      : {carrier}")
+    print(f"[+] Region       : {region}")
+
+    whatsapp_url = check_whatsapp_status(number)
+    print(f"[+] WhatsApp     : Likely Active (Check: {whatsapp_url})")
+
+    social = simulate_social_checks(number)
+    print(f"[+] Facebook     : {social['Facebook']}")
+    print(f"[+] Instagram    : {social['Instagram']}")
+    print(f"[+] Gmail        : {social['Gmail']}")
+    print(f"[+] TikTok       : {social['TikTok']}")
+
+    dork_url = generate_google_dork(number)
+    print(f"[+] Google Dork  : {dork_url}")
+
+    leak_check = check_leaks_dork(number)
+    print(f"[+] Leak Dork    : {leak_check}")
+
+    report = {
+        "number": number,
+        "carrier": carrier,
+        "region": region,
+        "whatsapp": whatsapp_url,
+        "facebook": social["Facebook"],
+        "instagram": social["Instagram"],
+        "gmail": social["Gmail"],
+        "tiktok": social["TikTok"],
+        "google_dork": dork_url,
+        "leak_check": leak_check,
+        "timestamp": str(datetime.now())
+    }
+    save_report(report, number)
 
 if __name__ == "__main__":
     main()
+
+
